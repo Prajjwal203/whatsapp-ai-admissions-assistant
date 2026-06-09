@@ -31,7 +31,7 @@ async def home():
     return {"message": "AI WhatsApp Assistant Running"}
 
 
-def generate_ai_response(user_message):
+def generate_ai_response(user_message, conversation_summary):
 
     context = retrieve_relevant_context(user_message)
 
@@ -44,7 +44,9 @@ def generate_ai_response(user_message):
                     "You are a professional AI admissions assistant "
                     "for a coaching institute.\n\n"
 
-                    "Answer ONLY using the provided brochure information.\n\n"
+                    "Use the lead summary to remember previous interactions.\n\n"
+
+                    f"Lead Summary:\n{conversation_summary}\n\n"
 
                     f"Brochure Information:\n{context}"
                 )
@@ -54,7 +56,7 @@ def generate_ai_response(user_message):
                 "content": user_message
             }
         ],
-temperature=0.5,
+temperature=0.3,
         max_tokens=300
     )
 
@@ -116,6 +118,150 @@ If a field is missing, return null.
             "course_interest": None
         }
 
+def generate_conversation_summary(
+    old_summary,
+    new_message
+):
+
+    completion = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {
+                "role": "system",
+                "content": """
+You are a CRM assistant.
+
+Update the existing conversation summary using the new message.
+
+Keep the summary concise.
+
+Include:
+- student's goals
+- interests
+- location
+- questions asked
+- important details
+
+Return ONLY the updated summary.
+"""
+            },
+            {
+                "role": "user",
+                "content": f"""
+Current Summary:
+{old_summary}
+
+New Message:
+{new_message}
+"""
+            }
+        ],
+        temperature=0.2,
+        max_tokens=200
+    )
+
+    return completion.choices[0].message.content
+
+def calculate_lead_score(summary):
+    completion = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {
+                "role": "system",
+                "content": """
+You are an admissions counselor.
+
+Analyze the lead summary.
+
+Return ONLY a number between 0 and 100.
+
+Scoring Guide:
+
+0-20 = Cold Lead
+21-50 = Warm Lead
+51-80 = Hot Lead
+81-100 = Ready To Enroll
+
+Consider:
+
+- interest level
+- questions asked
+- course inquiries
+- prior qualifications
+- enrollment intent
+- contact details shared
+
+Return ONLY the number.
+"""
+            },
+            {
+                "role": "user",
+                "content": summary
+            }
+        ],
+        temperature=0
+    )
+
+    score_text = completion.choices[0].message.content
+
+    try:
+        return int(score_text.strip())
+
+    except:
+        return 0
+
+@app.get("/leads")
+async def get_leads():
+
+    db = SessionLocal()
+
+    leads = db.query(Lead).all()
+
+    result = []
+
+    for lead in leads:
+
+        result.append({
+            "id": lead.id,
+            "name": lead.name,
+            "phone_number": lead.phone_number,
+            "email": lead.email,
+            "city": lead.city,
+            "target_goal": lead.target_goal,
+            "course_interest": lead.course_interest,
+            "conversation_summary": lead.conversation_summary,
+            "lead_score": lead.lead_score
+        })
+
+    db.close()
+
+    return result
+
+@app.get("/leads/{lead_id}")
+async def get_lead(lead_id: int):
+
+    db = SessionLocal()
+
+    lead = db.query(Lead).filter(
+        Lead.id == lead_id
+    ).first()
+
+    db.close()
+
+    if not lead:
+        return {"error": "Lead not found"}
+
+    return {
+        "id": lead.id,
+        "name": lead.name,
+        "phone_number": lead.phone_number,
+        "email": lead.email,
+        "city": lead.city,
+        "target_goal": lead.target_goal,
+        "course_interest": lead.course_interest,
+        "conversation_summary": lead.conversation_summary,
+        "lead_score": lead.lead_score
+    }
 
 @app.post("/webhook")
 async def whatsapp_webhook(request: Request):
@@ -175,8 +321,30 @@ async def whatsapp_webhook(request: Request):
     print("EXTRACTED DATA:")
     print(lead_data)
 
+    updated_summary = generate_conversation_summary(
+        lead.conversation_summary or "",
+        incoming_message
+    )
+
+    lead.conversation_summary = updated_summary
+
+    lead.lead_score += calculate_lead_score(
+        incoming_message
+    )
+
+    print("CURRENT LEAD SCORE:")
+    print(lead.lead_score)
+
+    db.commit()
+
+    print("UPDATED SUMMARY:")
+    print(updated_summary)
+
+    print("SUMMARY SENT TO AI:")
+    print(lead.conversation_summary)
+
     # Generate AI response
-    ai_reply = generate_ai_response(incoming_message)
+    ai_reply = generate_ai_response(incoming_message, lead.conversation_summary or "")
 
     print("AI RESPONSE:")
     print(ai_reply)

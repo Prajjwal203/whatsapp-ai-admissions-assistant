@@ -26,6 +26,8 @@ class Lead(Base):
 
     conversation_summary = Column(Text)
 
+    lead_score = Column(Integer, default=0)
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
     updated_at = Column(
