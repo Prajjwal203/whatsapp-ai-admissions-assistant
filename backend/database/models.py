@@ -28,6 +28,8 @@ class Lead(Base):
 
     lead_score = Column(Integer, default=0)
 
+    status = Column(String, default="NEW")
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
     updated_at = Column(

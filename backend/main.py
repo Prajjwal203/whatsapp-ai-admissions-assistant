@@ -13,7 +13,6 @@ Base.metadata.create_all(bind=engine)
 from groq import Groq
 from dotenv import load_dotenv
 
-import os
 
 # Load environment variables
 load_dotenv()
@@ -25,13 +24,59 @@ client = Groq(
 
 app = FastAPI()
 
+def get_recommended_action(score):
+
+    if score >= 80:
+        return "🔥 Call Immediately"
+
+    elif score >= 60:
+        return "📞 Follow Up Today"
+
+    elif score >= 30:
+        return "✉️ Send Follow-Up Message"
+
+    else:
+        return "🕒 Low Priority"
+    
+
+def generate_followup_message(summary):
+
+    completion = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {
+                "role": "system",
+                "content": """
+You are an admissions counselor.
+
+Create a short, friendly follow-up message.
+
+Use the lead summary.
+
+Keep it under 80 words.
+
+Do not be pushy.
+
+Return ONLY the follow-up message.
+"""
+            },
+            {
+                "role": "user",
+                "content": summary
+            }
+        ],
+        temperature=0.5,
+        max_tokens=150
+    )
+
+    return completion.choices[0].message.content
 
 @app.get("/")
 async def home():
     return {"message": "AI WhatsApp Assistant Running"}
 
 
-def generate_ai_response(user_message, conversation_summary):
+def generate_ai_response(user_message, conversation_summary, lead):
 
     context = retrieve_relevant_context(user_message)
 
@@ -46,9 +91,36 @@ def generate_ai_response(user_message, conversation_summary):
 
                     "Use the lead summary to remember previous interactions.\n\n"
 
-                    f"Lead Summary:\n{conversation_summary}\n\n"
+                    "Your first priority is collecting these fields:\n"
+                    "1. Name\n"
+                    "2. Email\n"
+                    "3. Target Goal\n\n"
 
-                    f"Brochure Information:\n{context}"
+                    "If any of these fields are missing, answer the user's question normally, but politely ask for the missing information at the end.\n\n"
+
+                    "If all three fields are already available, do not ask again.\n\n"
+                    "Do not tell the customer whether you have got their fields or not, unless they directly or indirectly ask, just register them and remember everything.\n\n"
+                    "Convince the customer if he/she doesn't feel like the Institute's course is good enough for him/her. Make him/her believe how FluentFast Academy can be the best option.\n\n"
+
+                    "Never interrupt the conversation.\n"
+                    "Always answer the user's question first.\n"
+                    "Keep the replies under 80 words for general talking, but there's no word limit when you're providing any important info.\n"
+
+                    "Use the lead summary to remember previous interactions.\n\n"
+
+                    f"""
+                        Lead Information:
+
+                        Name: {lead.name}
+                        Email: {lead.email}
+                        Target Goal: {lead.target_goal}
+
+                        Lead Summary:
+                        {conversation_summary}
+
+                        Brochure Information:
+                        {context}
+                    """
                 )
             },
             {
@@ -167,33 +239,57 @@ def calculate_lead_score(summary):
         model="llama-3.3-70b-versatile",
         messages=[
             {
-                "role": "system",
-                "content": """
-You are an admissions counselor.
+    "role": "system",
+    "content": """
+You are an expert admissions counselor and CRM analyst.
 
-Analyze the lead summary.
+Analyze the lead summary and estimate the student's likelihood of enrolling.
 
 Return ONLY a number between 0 and 100.
 
 Scoring Guide:
 
-0-20 = Cold Lead
-21-50 = Warm Lead
-51-80 = Hot Lead
-81-100 = Ready To Enroll
+0-20 = Casual visitor with little interest
+21-40 = Exploring options
+41-60 = Interested prospect
+61-80 = Serious prospect
+81-100 = Highly likely to enroll
 
-Consider:
+Positive signals:
 
-- interest level
-- questions asked
-- course inquiries
-- prior qualifications
-- enrollment intent
-- contact details shared
+- asking about fees
+- asking about enrollment
+- asking about batch timings
+- asking about curriculum
+- asking about certification
+- asking about admission process
+- discussing start dates
+- prior qualifications related to the course
+- sharing email or contact information
+- expressing urgency
+- expressing strong interest
+- asking multiple detailed questions
+
+Negative signals:
+
+- just browsing
+- just exploring
+- comparing multiple institutes
+- not ready yet
+- maybe later
+- no clear goal
+- vague interest
+- curiosity without intent
+
+Important:
+
+Do NOT increase the score simply because the conversation is long.
+
+Focus on enrollment intent and buying intent.
 
 Return ONLY the number.
 """
-            },
+        },
             {
                 "role": "user",
                 "content": summary
@@ -209,6 +305,18 @@ Return ONLY the number.
 
     except:
         return 0
+    
+
+def determine_status(score):
+
+    if score >= 80:
+        return "INTERESTED"
+
+    elif score >= 40:
+        return "CONTACTED"
+
+    else:
+        return "NEW"
 
 @app.get("/leads")
 async def get_leads():
@@ -229,8 +337,10 @@ async def get_leads():
             "city": lead.city,
             "target_goal": lead.target_goal,
             "course_interest": lead.course_interest,
+            "status": lead.status,
             "conversation_summary": lead.conversation_summary,
-            "lead_score": lead.lead_score
+            "lead_score": lead.lead_score,
+            "updated_at": lead.updated_at,
         })
 
     db.close()
@@ -246,23 +356,65 @@ async def get_lead(lead_id: int):
         Lead.id == lead_id
     ).first()
 
-    db.close()
-
     if not lead:
+        db.close()
         return {"error": "Lead not found"}
 
-    return {
-        "id": lead.id,
-        "name": lead.name,
-        "phone_number": lead.phone_number,
-        "email": lead.email,
-        "city": lead.city,
-        "target_goal": lead.target_goal,
-        "course_interest": lead.course_interest,
-        "conversation_summary": lead.conversation_summary,
-        "lead_score": lead.lead_score
-    }
+    followup_message = generate_followup_message(
+        lead.conversation_summary or ""
+    )
 
+    db.close()
+
+    return {
+    "id": lead.id,
+    "name": lead.name,
+    "phone_number": lead.phone_number,
+    "email": lead.email,
+    "city": lead.city,
+    "target_goal": lead.target_goal,
+    "course_interest": lead.course_interest,
+    "status": lead.status,
+    "conversation_summary": lead.conversation_summary,
+    "lead_score": lead.lead_score,
+    "updated_at": lead.updated_at,
+    "recommended_action": get_recommended_action(
+        lead.lead_score or 0
+    ),
+    "followup_message": followup_message
+}
+
+@app.get("/dashboard-stats")
+async def dashboard_stats():
+
+    db = SessionLocal()
+
+    leads = db.query(Lead).all()
+
+    total_leads = len(leads)
+
+    hot_leads = len([
+        lead for lead in leads
+        if (lead.lead_score or 0) >= 80
+    ])
+
+    average_score = 0
+
+    if total_leads > 0:
+
+        average_score = sum(
+            lead.lead_score or 0
+            for lead in leads
+        ) / total_leads
+
+    db.close()
+
+    return {
+        "total_leads": total_leads,
+        "hot_leads": hot_leads,
+        "average_score": round(average_score, 2)
+    }
+ 
 @app.post("/webhook")
 async def whatsapp_webhook(request: Request):
 
@@ -328,12 +480,19 @@ async def whatsapp_webhook(request: Request):
 
     lead.conversation_summary = updated_summary
 
-    lead.lead_score += calculate_lead_score(
-        incoming_message
+    lead.lead_score = calculate_lead_score(
+        lead.conversation_summary
+    )
+
+    lead.status = determine_status(
+        lead.lead_score
     )
 
     print("CURRENT LEAD SCORE:")
     print(lead.lead_score)
+
+    print("CURRENT STATUS:")
+    print(lead.status)
 
     db.commit()
 
@@ -344,7 +503,7 @@ async def whatsapp_webhook(request: Request):
     print(lead.conversation_summary)
 
     # Generate AI response
-    ai_reply = generate_ai_response(incoming_message, lead.conversation_summary or "")
+    ai_reply = generate_ai_response(incoming_message, lead.conversation_summary or "", lead)
 
     print("AI RESPONSE:")
     print(ai_reply)
