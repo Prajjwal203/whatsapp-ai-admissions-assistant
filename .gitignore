@@ -13,3 +13,5 @@ chroma_db/
 .vscode/
 
 *.sqlite3
+
+DEPLOYMENT_CHECKLIST.md
