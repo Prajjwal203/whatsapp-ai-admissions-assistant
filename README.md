@@ -233,15 +233,15 @@ GET /
 
 ### Dashboard
 
-(Add screenshot here)
+![Dashboard](screenshots/dashboard.png)
 
 ### Lead Profile
 
-(Add screenshot here)
+![Lead Profile](screenshots/lead-profile.png)
 
 ### WhatsApp Conversation
 
-(Add screenshot here)
+![WhatsApp Conversation](screenshots/whatsapp-chat.jpeg)
 
 ---
 
@@ -280,3 +280,4 @@ This project demonstrates:
 Generative AI Engineer focused on building AI-powered business solutions.
 
 GitHub: https://github.com/Prajjwal203
+LinkedIn: https://linkedin.com/in/prajjwal203
