@@ -7,6 +7,13 @@ from database.db import SessionLocal
 from database.models import Lead
 import os
 import json
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
 Base.metadata.create_all(bind=engine)
 
@@ -41,35 +48,54 @@ def get_recommended_action(score):
 
 def generate_followup_message(summary):
 
-    completion = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[
-            {
-                "role": "system",
-                "content": """
-You are an admissions counselor.
+    try:
 
-Create a short, friendly follow-up message.
+        completion = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {
+                    "role": "system",
+                    "content": """
 
-Use the lead summary.
+    You are a professional admissions counselor.
 
-Keep it under 80 words.
+    Create a friendly and personalized follow-up message based on the lead summary.
 
-Do not be pushy.
+    Guidelines:
 
-Return ONLY the follow-up message.
-"""
-            },
-            {
-                "role": "user",
-                "content": summary
-            }
+    Use information from the lead summary.
+    Mention the lead's interest or goal when relevant.
+    Keep the tone warm and professional.
+    Do not sound robotic.
+    Do not sound salesy or pushy.
+    Encourage further conversation naturally.
+    Include at most one gentle call-to-action.
+    Keep the message under 80 words.
+
+    Return ONLY the follow-up message.
+    """
+        },
+        {
+            "role": "user",
+            "content": summary
+        }
         ],
         temperature=0.5,
         max_tokens=150
-    )
+        )
 
-    return completion.choices[0].message.content
+        return completion.choices[0].message.content
+
+    except Exception as e:
+
+        print(f"Follow-up Generation Error: {e}")
+
+        return (
+            "Thank you for your interest. "
+            "Please let us know if you have any questions. "
+            "We would be happy to help."
+        )
+
 
 @app.get("/")
 async def home():
@@ -78,109 +104,165 @@ async def home():
 
 def generate_ai_response(user_message, conversation_summary, lead):
 
-    context = retrieve_relevant_context(user_message)
+    try:
+        context = retrieve_relevant_context(user_message)
 
-    completion = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[
+        completion = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
             {
                 "role": "system",
-                "content": (
-                    "You are a professional AI admissions assistant "
-                    "for a coaching institute.\n\n"
+                "content": f"""
 
-                    "Use the lead summary to remember previous interactions.\n\n"
+You are a professional AI admissions and customer support assistant.
 
-                    "Your first priority is collecting these fields:\n"
-                    "1. Name\n"
-                    "2. Email\n"
-                    "3. Target Goal\n\n"
+You represent the organization described in the brochure information below.
 
-                    "If any of these fields are missing, answer the user's question normally, but politely ask for the missing information at the end.\n\n"
+Your job is to help prospective students or customers by providing accurate, useful, and complete information.
 
-                    "If all three fields are already available, do not ask again.\n\n"
-                    "Do not tell the customer whether you have got their fields or not, unless they directly or indirectly ask, just register them and remember everything.\n\n"
-                    "Convince the customer if he/she doesn't feel like the Institute's course is good enough for him/her. Make him/her believe how FluentFast Academy can be the best option.\n\n"
+MEMORY
 
-                    "Never interrupt the conversation.\n"
-                    "Always answer the user's question first.\n"
-                    "Keep the replies under 80 words for general talking, but there's no word limit when you're providing any important info.\n"
+Use the Lead Information and Lead Summary to remember previous conversations and avoid asking the same questions repeatedly.
 
-                    "Use the lead summary to remember previous interactions.\n\n"
+LEAD QUALIFICATION
 
-                    f"""
-                        Lead Information:
+Your first priority is gradually collecting these fields if they are missing:
 
-                        Name: {lead.name}
-                        Email: {lead.email}
-                        Target Goal: {lead.target_goal}
+Name
+Email
+Target Goal
 
-                        Lead Summary:
-                        {conversation_summary}
+IMPORTANT RULES
 
-                        Brochure Information:
-                        {context}
-                    """
-                )
-            },
-            {
-                "role": "user",
-                "content": user_message
-            }
-        ],
-temperature=0.3,
-        max_tokens=300
-    )
+Always answer the user's question completely before asking for any missing information.
+Never interrupt the conversation flow to collect information.
+If information is missing, politely ask for it at the end of your response.
+If all required information is already available, do not ask again.
+Do not mention whether information has already been collected unless the user asks.
 
-    return completion.choices[0].message.content
+RESPONSE GUIDELINES
+
+For greetings, acknowledgements, thanks, and casual conversation, keep responses concise.
+For questions about courses, programs, curriculum, schedules, duration, fees, facilities, admissions, certifications, benefits, or any brochure-related information, provide complete and detailed answers.
+If the user asks multiple questions, answer all of them.
+If the user asks for details, provide details.
+Never sacrifice important information just to keep responses short.
+The quality and usefulness of the answer are more important than response length.
+
+BROCHURE USAGE
+
+The brochure information below is the official source of information.
+
+Use it as your primary source when answering questions about:
+
+Courses
+Programs
+Fees
+Timings
+Schedules
+Duration
+Curriculum
+Admission Process
+Facilities
+Certifications
+Benefits
+Services
+
+If relevant information exists in the brochure, provide a complete answer using that information.
+
+HANDLING OBJECTIONS
+
+If a user has concerns, doubts, or comparisons, address them professionally using facts available in the brochure.
+
+Do not exaggerate.
+Do not make unrealistic promises.
+Do not pressure the user.
+
+Your goal is to help the user make an informed decision.
+
+Lead Information:
+
+Name: {lead.name}
+Email: {lead.email}
+Target Goal: {lead.target_goal}
+
+Lead Summary:
+
+{conversation_summary}
+
+Official Brochure Information:
+
+{context}
+"""
+},
+{
+"role": "user",
+"content": user_message
+}
+],
+    temperature=0.3,
+            max_tokens=600
+        )
+
+        return completion.choices[0].message.content
+
+    except Exception as e:
+
+        logger.error(f"AI Response Error: {e}")
+
+        return (
+            "Thank you for your message. "
+            "Our admissions team will assist you shortly."
+        ) 
 
 
 def extract_lead_information(user_message):
 
-    completion = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[
-            {
-                "role": "system",
-                "content": """
-Extract lead information from the message.
-
-Return ONLY valid JSON.
-
-Fields:
-name
-email
-city
-target_goal
-course_interest
-
-If a field is missing, return null.
-"""
-            },
-            {
-                "role": "user",
-                "content": user_message
-            }
-        ],
-        temperature=0
-    )
-
-    response_text = completion.choices[0].message.content
-
-    print("RAW EXTRACTION RESPONSE:")
-    print(response_text)
-
-    response_text = response_text.replace("```json", "")
-    response_text = response_text.replace("```", "")
-    response_text = response_text.strip()
-
     try:
+
+        completion = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+
+                {
+                    "role": "system",
+                    "content": """
+    Extract lead information from the message.
+
+    Return ONLY valid JSON.
+
+    Fields:
+    name
+    email
+    city
+    target_goal
+    course_interest
+
+    If a field is missing, return null.
+    """
+                },
+                {
+                    "role": "user",
+                    "content": user_message
+                }
+            ],
+            temperature=0
+        )
+
+        response_text = completion.choices[0].message.content
+
+        print("RAW EXTRACTION RESPONSE:")
+        print(response_text)
+
+        response_text = response_text.replace("```json", "")
+        response_text = response_text.replace("```", "")
+        response_text = response_text.strip()
+
         return json.loads(response_text)
 
     except Exception as e:
 
-        print("JSON ERROR:")
-        print(e)
+        print(f"Lead Extraction Error: {e}")
 
         return {
             "name": None,
@@ -189,22 +271,22 @@ If a field is missing, return null.
             "target_goal": None,
             "course_interest": None
         }
+    
 
 def generate_conversation_summary(
     old_summary,
     new_message
 ):
 
-    completion = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[
+    try:
+        completion = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
             {
                 "role": "system",
                 "content": """
 You are a CRM assistant.
-
 Update the existing conversation summary using the new message.
-
 Keep the summary concise.
 
 Include:
@@ -227,17 +309,26 @@ New Message:
 {new_message}
 """
             }
-        ],
-        temperature=0.2,
-        max_tokens=200
-    )
+    ],
+            temperature=0.2,
+            max_tokens=200
+        )
 
-    return completion.choices[0].message.content
+        return completion.choices[0].message.content
+
+    except Exception as e:
+
+        print(f"[ERROR] Conversation Summary Error: {e}")
+
+        return old_summary
 
 def calculate_lead_score(summary):
-    completion = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[
+
+    try:
+
+        completion = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
             {
     "role": "system",
     "content": """
@@ -295,16 +386,18 @@ Return ONLY the number.
                 "content": summary
             }
         ],
-        temperature=0
-    )
+            temperature=0
+        )
 
-    score_text = completion.choices[0].message.content
+        score_text = completion.choices[0].message.content
 
-    try:
         return int(score_text.strip())
 
-    except:
-        return 0
+    except Exception as e:
+
+        print(f"[ERROR] Lead Score Error: {e}")
+
+        return 50
     
 
 def determine_status(score):
@@ -423,6 +516,10 @@ async def whatsapp_webhook(request: Request):
     incoming_message = form_data.get("Body")
 
     phone_number = form_data.get("From")
+
+    logger.info(
+        f"Message received from {phone_number}: {incoming_message}"
+    )
     db = SessionLocal()
 
     lead = db.query(Lead).filter(
@@ -435,40 +532,56 @@ async def whatsapp_webhook(request: Request):
             phone_number=phone_number
         )
 
-        db.add(lead)
+        try:
+            db.add(lead)
 
-        db.commit()
+            db.commit()
 
-        db.refresh(lead)
+            db.refresh(lead)
 
-        print("NEW LEAD CREATED")
+            logger.info(f"New lead created: {phone_number}")  #logging instaed of printing
+
+        except Exception as e:
+            db.rollback()
+
+            # print(f"Database Error: {e}")
+            logger.error(f"Database Error: {e}")
 
     else:
 
-        print("EXISTING LEAD FOUND")
+        logger.info(f"Existing lead found: {phone_number}")
 
 
-    print("MESSAGE RECEIVED:")
-    print(incoming_message)
+    # print("MESSAGE RECEIVED:")
+    # print(incoming_message)
+    logger.info(f"MESSAGE RECEIVED: {incoming_message}")
 
     lead_data = extract_lead_information(incoming_message)
 
-    if lead_data.get("name"):
-        lead.name = lead_data["name"]
+    logger.info(f"Lead information extracted for {phone_number}")
 
-    if lead_data.get("email"):
-        lead.email = lead_data["email"]
+    try:
+        if lead_data.get("name"):
+            lead.name = lead_data["name"]
 
-    if lead_data.get("city"):
-        lead.city = lead_data["city"]
+        if lead_data.get("email"):
+            lead.email = lead_data["email"]
 
-    if lead_data.get("target_goal"):
-        lead.target_goal = lead_data["target_goal"]
+        if lead_data.get("city"):
+            lead.city = lead_data["city"]
 
-    if lead_data.get("course_interest"):
-        lead.course_interest = lead_data["course_interest"]
+        if lead_data.get("target_goal"):
+            lead.target_goal = lead_data["target_goal"]
 
-    db.commit()
+        if lead_data.get("course_interest"):
+            lead.course_interest = lead_data["course_interest"]
+
+        db.commit()
+
+    except Exception as e:
+
+        db.rollback()
+        logger.error(f"Database Error: {e}")  #logged
 
     print("EXTRACTED DATA:")
     print(lead_data)
@@ -478,23 +591,27 @@ async def whatsapp_webhook(request: Request):
         incoming_message
     )
 
-    lead.conversation_summary = updated_summary
+    try:
 
-    lead.lead_score = calculate_lead_score(
-        lead.conversation_summary
-    )
+        lead.conversation_summary = updated_summary
 
-    lead.status = determine_status(
-        lead.lead_score
-    )
+        lead.lead_score = calculate_lead_score(
+            lead.conversation_summary
+        )
 
-    print("CURRENT LEAD SCORE:")
-    print(lead.lead_score)
+        logger.info(f"Lead score generated: {lead.lead_score}")
 
-    print("CURRENT STATUS:")
-    print(lead.status)
+        lead.status = determine_status(
+            lead.lead_score
+        )
 
-    db.commit()
+        db.commit()
+
+    except Exception as e:
+
+        db.rollback()
+
+        print(f"Summary Update Error: {e}")
 
     print("UPDATED SUMMARY:")
     print(updated_summary)
@@ -505,8 +622,10 @@ async def whatsapp_webhook(request: Request):
     # Generate AI response
     ai_reply = generate_ai_response(incoming_message, lead.conversation_summary or "", lead)
 
-    print("AI RESPONSE:")
-    print(ai_reply)
+    # print("AI RESPONSE:")
+    # print(ai_reply)
+    logger.info(
+    f"AI response generated for {phone_number}")
 
     # Twilio response
     twilio_response = MessagingResponse()
